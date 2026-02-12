@@ -59,7 +59,6 @@ Processes involved above are: `LGWR`, `LNSn`, `RFS`, `MRP` (`LSP` for Logical St
 
 > [!IMPORTANT]
 > FAL_SERVER and FAL_CLIENT servers are used for Gap Recovery. FAL_CLIENT is deprecated now. FAL stands for Fetch Archive Logs.
-> [!IMPORTANT]
 > Standby REDO Logs are N+1 of Primary REDO Logs i.e., if Primary has 3 REDO Logs, then there should be 4 Standby REDO Logs.
 
 ## Parameters Configured in Data Guard
