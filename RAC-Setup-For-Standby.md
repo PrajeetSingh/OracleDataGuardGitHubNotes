@@ -92,20 +92,21 @@ Here is a standard, clean IP allocation matrix you can use for your VirtualBox n
 ---
 
 #### Node 1 (`racnode1`)
-* **Public IP:** `192.168.56.101`
-* **Virtual IP (VIP):** `192.168.56.111`
-* **Private IP (Interconnect):** `10.10.10.101`
+* **Public IP:** `192.168.56.121`
+* **Virtual IP (VIP):** `192.168.56.131`
+* **Private IP (Interconnect):** `10.10.10.121`
 
 #### Node 2 (`racnode2`)
-* **Public IP:** `192.168.56.102`
-* **Virtual IP (VIP):** `192.168.56.112`
-* **Private IP (Interconnect):** `10.10.10.102`
+* **Public IP:** `192.168.56.122`
+* **Virtual IP (VIP):** `192.168.56.132`
+* **Private IP (Interconnect):** `10.10.10.122`
 
 ---
 
 #### SCAN (Single Client Access Name)
 * **SCAN Name:** `rac-scan`
-* **SCAN IPs:** `192.168.56.121`, `192.168.56.122`, `192.168.56.123`
+* **SCAN IPs:** `192.168.56.141`, `192.168.56.142`, `192.168.56.143`
+* **SCAN IPs (home lab):** `192.168.56.141`
 
 > **Note:** For a home lab without a dedicated DNS server, you can cheat and just map a single SCAN IP in your `/etc/hosts` file to get past the installer warnings.
 
@@ -139,4 +140,3 @@ Here is a standard, clean IP allocation matrix you can use for your VirtualBox n
 10.10.10.122    racnode2-priv.localdomain racnode2-priv
 ```
 Once you have the VMs created, the disks attached, and the OS installed with these IPs, we will need to configure udev rules so Oracle can actually see those disks as raw ASM devices.
-
