@@ -160,7 +160,7 @@ SID_LIST_LISTENER =
     (SID_DESC =
       (GLOBAL_DBNAME = FSInstScd_SVC)  # Service Name used in Connect Identifier
       (ORACLE_HOME = /u01/app/oracle/product/19.3.0/dbhome_1)
-      (SID_NAME = FSInstScd)           # Your Far Sync SID
+      (SID_NAME = FSInstScd)           # Far Sync SID
     )
   )
 
@@ -205,6 +205,9 @@ DG_BROKER_START=TRUE
 REMOTE_LOGIN_PASSWORDFILE=EXCLUSIVE
 ```
 
+Further Far Sync Init parameters are provided in below link:
+https://github.com/PrajeetSingh/OracleDataGuardGitHubNotes/blob/main/Far-Sync-Parameters.md
+
 Mount the instance:
 
 ```bash
@@ -212,9 +215,9 @@ export ORACLE_SID=FSInstScd
 sqlplus / as sysdba
 STARTUP MOUNT PFILE='/path/to/initFSInstScd.ora';
 CREATE SPFILE FROM PFILE;
-shutdown immediate;
-startup mount;
-show parameter spfile;
+SHUTDOWN IMMEDIATE;
+STARTUP MOUNT;
+SHOW PARAMETER SPFILE;
 SELECT PROCESS, STATUS, CLIENT_PROCESS, SEQUENCE# FROM V$MANAGED_STANDBY;
 ```
 
@@ -248,11 +251,11 @@ EDIT FAR_SYNC 'FSInstScd' SET PROPERTY RedoRoutes = '(cdbapp1_sec : cdbapp1_mcd 
 ENABLE FAR_SYNC 'FSInstScd';
 ```
 
-We need to protect the Primary from stalling if the VM gets overwhelmed.
-
 ### 4. Set NetTimeout 
 
-On the Primary, reduce the wait time so the database doesn't hang if the Far Sync VM lags.
+We need to protect the Primary from stalling if the VM gets overwhelmed.
+
+On the Primary, reduce the wait time so the database doesn't hang if the Far Sync VM lags. Here, we are setting it to wait not more than 10 seconds.
 
 ```SQL
 EDIT DATABASE 'cdbapp1_sec' SET PROPERTY NetTimeout = 10;
@@ -275,7 +278,8 @@ EDIT FAR_SYNC 'FSInstScd' SET PROPERTY FarSyncAdvise = 'PREFER';
 The Broker might warn you if SRLs are missing. Add them on the Far Sync VM to match the Primary's log size:
 
 ```SQL
-ALTER DATABASE ADD STANDBY LOGFILE SIZE 200M; -- Repeat to match Primary + 1
+-- Repeat to match number of Primary REDO Logs + 1
+ALTER DATABASE ADD STANDBY LOGFILE SIZE 200M; 
 
 SELECT GROUP#, TYPE, MEMBER FROM V$LOGFILE WHERE TYPE = 'STANDBY';
 ```
@@ -305,10 +309,10 @@ Use these scripts to ensure the Far Sync relay isn't introducing latency into yo
 
 ### 1. Check Transport Lag (On Primary)
 
-This confirms if the SYNC transport to the Far Sync VM is keeping up with the Primary's redo generation.
+This confirms if the SYNC transport to the Far Sync VM is keeping up with the Primary's REDO generation.
 
 ```sql
-SET LINESIZE 200
+SET LINESIZE 200 PAGESIZE 2000
 COLUMN destination FORMAT a15
 COLUMN status FORMAT a10
 COLUMN error FORMAT a20
@@ -316,9 +320,13 @@ COLUMN error FORMAT a20
 SELECT dest_id, status, target, archived_seq#, applied_seq#, error 
 FROM v$archive_dest_status 
 WHERE dest_id IN (1, 2);
+
+-- OR in Data Guard
+SHOW DATABASE <standby_database_name>;
+SHOW DATABASE cdbapp1_mcd;
 ```
 
-### 2. Verify Redo Relay (On Far Sync VM)
+### 2. Verify REDO Relay (On Far Sync VM)
 
 Since Far Sync has no data, it only shows the "Received" and "Sent" status.
 
@@ -329,6 +337,9 @@ FROM v$managed_standby
 WHERE process IN ('RFS', 'LNS', 'TT00');
 ```
 
+> [!NOTE]
+> `TT00` is a helper process that manages redo transport timing, retries, and state transitions.
+
 ### 3. Check End-to-End Apply Lag (On Standby)
 
 It tells you how far behind the Standby is from the Primary, accounting for the Far Sync hop.
@@ -337,6 +348,10 @@ It tells you how far behind the Standby is from the Primary, accounting for the 
 SELECT name, value, datum_time, time_computed 
 FROM v$dataguard_stats 
 WHERE name IN ('transport lag', 'apply lag');
+
+-- OR in Data Guard
+SHOW DATABASE <standby_database_name>;
+SHOW DATABASE cdbapp1_mcd;
 ```
 
 ### 4. Check DG Health (if it is ready for switchover)
@@ -345,6 +360,10 @@ WHERE name IN ('transport lag', 'apply lag');
 SELECT database_role, open_mode, protection_mode, protection_level FROM v$database;
 SELECT switchover_status FROM v$database;
 SELECT GROUP#, TYPE, MEMBER FROM V$LOGFILE WHERE TYPE = 'STANDBY';
+
+-- Or in Data Guard Broker, check if `Ready for Switchover` is `Yes`.
+VALIDATE DATABASE <standby_database_name>;
+VALIDATE DATABASE cdbapp1_mcd;
 ```
 
 ## Key Considerations
