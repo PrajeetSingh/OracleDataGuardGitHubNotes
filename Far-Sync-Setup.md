@@ -1,6 +1,26 @@
-# Far Sync Setup 
+# Far Sync Setup (Oracle 19c)
 
-**Assumption:** We have a functioning Data Guard Broker configuration, we need to inject the Far Sync instance into the existing environment rather than rebuilding it.
+This runbook describes how to add a Far Sync instance into an existing Data Guard Broker configuration without rebuilding the environment.
+Far Sync provides zero-data-loss protection by receiving SYNC redo from the primary and forwarding it to one or more standbys.
+
+```plaintext
+Primary (cdbapp1_sec)
+        |
+        | SYNC (AFFIRM)
+        v
+   Far Sync (FSInstScd)
+        |
+        | ASYNC (NOAFFIRM)
+        v
+ Standby (cdbapp1_mcd)
+```
+
+## Prerequisites
+* Primary and standby databases already configured in Data Guard Broker.
+* Flashback Database enabled on primary and standby.
+* Password files identical across all nodes.
+* Network connectivity verified between Primary ↔ Far Sync and Far Sync ↔ Standby.
+* Oracle 19c binaries available.
 
 This is a end-to-end runbook for a Broker-managed Far Sync addition.
 
@@ -18,7 +38,7 @@ yum install -y oracle-database-preinstall-19c
 ### 2. Create Directories
 
 ```Bash
-mkdir -p /u01/app/oracle/product/19.3.0/dbhome_1
+mkdir -p /u01/app/oracle/product/19.0.0/dbhome_1
 mkdir -p /u01/app/oraInventory
 chown -R oracle:oinstall /u01/app/
 chmod -R 775 /u01/app/
@@ -40,11 +60,9 @@ export LD_LIBRARY_PATH=$ORACLE_HOME/lib:/lib:/usr/lib
 
 ## Phase 2: Software Installation (As oracle)
 
-Oracle 19c uses Image-based installation. You must unzip the software directly into the ORACLE_HOME.
+Oracle 19c uses Image-based installation.
 
 ### 1. Unzip the Binaries
-
-Upload the LINUX.X64_193000_db_home.zip to the VM, then:
 
 ```Bash
 cd $ORACLE_HOME
@@ -53,7 +71,7 @@ unzip -q /path/to/LINUX.X64_193000_db_home.zip
 
 ### 2. Run the Installer
 
-We will run the installer in "Software Only" mode.
+Run the installer in "Software Only" mode.
 
 Option A: Interactive (GUI): If you have X11 forwarding:
 
@@ -73,7 +91,7 @@ Option B: Silent Mode (Command Line): If you don't have a GUI, use this response
 oracle.install.option=INSTALL_DB_SWONLY \
 UNIX_GROUP_NAME=oinstall \
 INVENTORY_LOCATION=/u01/app/oraInventory \
-ORACLE_HOME=/u01/app/oracle/product/19.3.0/dbhome_1 \
+ORACLE_HOME=/u01/app/oracle/product/19.0.0/dbhome_1 \
 ORACLE_BASE=/u01/app/oracle \
 oracle.install.db.InstallEdition=EE \
 oracle.install.db.OSDBA_GROUP=dba \
@@ -90,7 +108,7 @@ Once the installer finishes, it will prompt you to run two scripts:
 
 ```Bash
 /u01/app/oraInventory/orainstRoot.sh
-/u01/app/oracle/product/19.3.0/dbhome_1/root.sh
+/u01/app/oracle/product/19.0.0/dbhome_1/root.sh
 ```
 
 ### Phase 4: Final Verification for Far Sync
@@ -103,7 +121,7 @@ cd $ORACLE_HOME/bin
 # Output should show: SQL*Plus: Release 19.0.0.0.0 - Production
 ```
 
-Now that the software is installed, the next logical step is to configure the Listener and TNS so the Primary can communicate with this new node.
+Now that the software is installed, the next step is to configure the Listener and TNS so the Primary can communicate with this new node.
 
 
 ## Phase 5: Preparation (Far Sync VM)
@@ -112,23 +130,23 @@ Now that the software is installed, the next logical step is to configure the Li
 
 For a Far Sync instance, the network configuration is the most common point of failure. Because the Primary database will be shipping redo in SYNC mode, any network "hiccups" or timeouts will cause the Primary to hang.
 
-**TNS Entry:** Ensure PROD_DB, STDBY_DB, and FSInstScd are in the tnsnames.ora on all three nodes.
+**TNS Entry:** Ensure identical tnsnames.ora on primary, standby, and Far Sync.
 
 Ensure this is identical on all nodes to facilitate role transitions.
 
 Path: `$ORACLE_HOME/network/admin/tnsnames.ora`
 
 ```
-PROD_DB =
+cdbapp1_sec =
   (DESCRIPTION =
     (ADDRESS = (PROTOCOL = TCP)(HOST = <Primary_IP>)(PORT = 1521))
-    (CONNECT_DATA = (SERVICE_NAME = PROD_DB_SVC))
+    (CONNECT_DATA = (SERVICE_NAME = cdbapp1_sec_svc))
   )
 
-STDBY_DB =
+cdbapp1_mcd =
   (DESCRIPTION =
     (ADDRESS = (PROTOCOL = TCP)(HOST = <Standby_IP>)(PORT = 1521))
-    (CONNECT_DATA = (SERVICE_NAME = STDBY_DB_SVC))
+    (CONNECT_DATA = (SERVICE_NAME = cdbapp1_mcd_svc))
   )
 
 FSInstScd =
@@ -138,9 +156,10 @@ FSInstScd =
   )
 ```
 
-**Static Listener:** Add the FSInstScd SID to listener.ora on the Far Sync VM. This is mandatory for the Broker to manage the instance.
+**Static Listener:** Add the FSInstScd SID to listener.ora on the Far Sync VM, so the Broker can reach it even when the instance is down.
 
-On the Far Sync VM, add this to listener.ora so the Broker can reach it even when the instance is down:
+> [!NOTE]
+> This is mandatory for the Broker to manage the instance.
 
 Path: `$ORACLE_HOME/network/admin/listener.ora`
 
@@ -150,7 +169,7 @@ Path: `$ORACLE_HOME/network/admin/listener.ora`
 LISTENER =
   (DESCRIPTION_LIST =
     (DESCRIPTION =
-      (ADDRESS = (PROTOCOL = TCP)(HOST = 192.168.56.111)(PORT = 1521))
+      (ADDRESS = (PROTOCOL = TCP)(HOST = <FarSync_IP>)(PORT = 1521))
     )
   )
 
@@ -159,16 +178,16 @@ SID_LIST_LISTENER =
   (SID_LIST =
     (SID_DESC =
       (GLOBAL_DBNAME = FSInstScd_SVC)  # Service Name used in Connect Identifier
-      (ORACLE_HOME = /u01/app/oracle/product/19.3.0/dbhome_1)
+      (ORACLE_HOME = /u01/app/oracle/product/19.0.0/dbhome_1)
       (SID_NAME = FSInstScd)           # Far Sync SID
     )
   )
 
 ```
 
-**SQLNET Tuning:** (`sqlnet.ora`)
+**SQLNET Tuning:** (`sqlnet.ora`): Prevent network hangs.
 
-Because we are using SYNC transport from the Primary to this VM, network stability is critical. We add timeouts to ensure a hung network doesn't hang our Primary database.
+Because we are using SYNC transport from the Primary to this Far Sync VM, network stability is critical. We add timeouts to ensure a hung network doesn't hang our Primary database. Values are in seconds.
 
 Path: `$ORACLE_HOME/network/admin/sqlnet.ora`
 
@@ -184,7 +203,10 @@ TCP.CONNECT_TIMEOUT = 10
 
 **Password File:** Copy the password file from the Primary to the Far Sync VM's $ORACLE_HOME/dbs/ and rename it to orapwFSInstScd.
 
-cp orapwPROD_DB orapwFSInstScd
+```bash
+cp oracle@<primary_ip>:/u01/app/oracle/product/19.0.0/dbhome_1/dbs/orapwcdbapp1_sec $ORACLE_HOME/dbs/orapwFSInstScd
+# Change paths and file names as per the environment.
+```
 
 ### 2. Create Far Sync Control File (On Primary)
 
@@ -195,24 +217,24 @@ ALTER DATABASE CREATE FAR SYNC INSTANCE CONTROLFILE AS '/tmp/fs_control.ctl';
 
 ### 3. Initialize Far Sync (On Far Sync VM)
 
-Create a PFILE initFSInstScd.ora:
+#### a. Create a PFILE initFSInstScd.ora:
 
 ```Plaintext
-DB_NAME=PROD_DB
+DB_NAME=cdbapp1
 DB_UNIQUE_NAME=FSInstScd
 CONTROL_FILES='/u01/app/oracle/oradata/FSInstScd/fs_control.ctl'
 DG_BROKER_START=TRUE
 REMOTE_LOGIN_PASSWORDFILE=EXCLUSIVE
 ```
 
-Further Far Sync Init parameters are provided in below link:
-https://github.com/PrajeetSingh/OracleDataGuardGitHubNotes/blob/main/Far-Sync-Parameters.md
-
-Mount the instance:
+#### b. Mount the instance:
 
 ```bash
 export ORACLE_SID=FSInstScd
 sqlplus / as sysdba
+```
+
+```sql
 STARTUP MOUNT PFILE='/path/to/initFSInstScd.ora';
 CREATE SPFILE FROM PFILE;
 SHUTDOWN IMMEDIATE;
@@ -233,13 +255,13 @@ ADD FAR_SYNC 'FSInstScd' AS CONNECT IDENTIFIER IS 'FSInstScd';
 
 ### 2. Configure Redo Routes
 
-This is the most critical step. You must tell the Broker to route redo through the Far Sync to reach the Standby. Replace PROD_DB and STDBY_DB with your actual DB_UNIQUE_NAME values.
+Route redo from Primary to Far Sync (SYNC) with priority 1. Fall back to sending directly to the Standby (ASYNC) as priority 2 if Far Sync fails.
 
 This defines the new "Primary --> Far Sync --> Standby" pipeline.
 
 ```SQL
 -- Route redo from Primary to Far Sync (SYNC)
-EDIT DATABASE 'cdbapp1_sec' SET PROPERTY RedoRoutes = '(LOCAL : FSInstScd SYNC)';
+EDIT DATABASE 'cdbapp1_sec' SET PROPERTY RedoRoutes = '(LOCAL : (FSInstScd SYNC PRIORITY=1, cdbapp1_mcd ASYNC PRIORITY=2))';
 
 -- Route redo from Far Sync to Standby (ASYNC)
 EDIT FAR_SYNC 'FSInstScd' SET PROPERTY RedoRoutes = '(cdbapp1_sec : cdbapp1_mcd ASYNC)';
@@ -261,24 +283,16 @@ On the Primary, reduce the wait time so the database doesn't hang if the Far Syn
 EDIT DATABASE 'cdbapp1_sec' SET PROPERTY NetTimeout = 10;
 ```
 
-### 5. Set FarSyncAdvise
-
-This tells the Broker how to handle a Far Sync failure.
-
-**Value:** `PREFER`: If Far Sync fails, the Primary will try to ship directly to the Standby (likely in ASYNC) to keep the Primary running.
-
-```SQL
-EDIT FAR_SYNC 'FSInstScd' SET PROPERTY FarSyncAdvise = 'PREFER';
-```
-
 ## Phase 7: Final Sync & Validation
 
 ### 1. Add Standby Redo Logs (SRLs)
 
-The Broker might warn you if SRLs are missing. Add them on the Far Sync VM to match the Primary's log size:
+Add SRLs on the Far Sync VM to match the Primary's log size.
+
+*Rule: Total SRLs = (Number of Primary Redo Log Groups + 1) * Number of Threads.*
 
 ```SQL
--- Repeat to match number of Primary REDO Logs + 1
+-- Repeat to match calculation above
 ALTER DATABASE ADD STANDBY LOGFILE SIZE 200M; 
 
 SELECT GROUP#, TYPE, MEMBER FROM V$LOGFILE WHERE TYPE = 'STANDBY';
@@ -305,11 +319,21 @@ SELECT DEST_ID, DEST_NAME, STATUS, TARGET FROM V$ARCHIVE_DEST_STATUS WHERE STATU
 
 ## Phase 8: Monitoring & Troubleshooting
 
-Use these scripts to ensure the Far Sync relay isn't introducing latency into your Primary database.
+Monitoring Far Sync requires checking three layers:
 
-### 1. Check Transport Lag (On Primary)
+1. Primary → Far Sync (SYNC transport)
+
+2. Far Sync → Standby (ASYNC transport)
+
+3. End-to-end apply on the standby
+
+Use these scripts to ensure the Far Sync relay isn't introducing latency into Primary database.
+
+### 1. Check Transport Lag (Primary -> Far Sync)
 
 This confirms if the SYNC transport to the Far Sync VM is keeping up with the Primary's REDO generation.
+
+Run below on Primary:
 
 ```sql
 SET LINESIZE 200 PAGESIZE 2000
@@ -322,6 +346,8 @@ FROM v$archive_dest_status
 WHERE dest_id IN (1, 2);
 
 -- OR in Data Guard
+SHOW DATABASE <primary_database_name>;
+SHOW DATABASE cdbapp1_sec;
 SHOW DATABASE <standby_database_name>;
 SHOW DATABASE cdbapp1_mcd;
 ```
@@ -335,6 +361,10 @@ Since Far Sync has no data, it only shows the "Received" and "Sent" status.
 SELECT process, status, thread#, sequence#, block#, blocks 
 FROM v$managed_standby 
 WHERE process IN ('RFS', 'LNS', 'TT00');
+
+-- OR in Data Guard
+SHOW FAR_SYNC FSInstScd;
+VALIDATE FAR_SYNC FSInstScd;
 ```
 
 > [!NOTE]
@@ -342,7 +372,9 @@ WHERE process IN ('RFS', 'LNS', 'TT00');
 
 ### 3. Check End-to-End Apply Lag (On Standby)
 
-It tells you how far behind the Standby is from the Primary, accounting for the Far Sync hop.
+It tells you how far behind the Standby is from the Primary.
+
+Run below on Standby:
 
 ```sql
 SELECT name, value, datum_time, time_computed 
@@ -354,7 +386,7 @@ SHOW DATABASE <standby_database_name>;
 SHOW DATABASE cdbapp1_mcd;
 ```
 
-### 4. Check DG Health (if it is ready for switchover)
+### 4. Check Switchover Readiness
 
 ```sql
 SELECT database_role, open_mode, protection_mode, protection_level FROM v$database;
@@ -364,7 +396,33 @@ SELECT GROUP#, TYPE, MEMBER FROM V$LOGFILE WHERE TYPE = 'STANDBY';
 -- Or in Data Guard Broker, check if `Ready for Switchover` is `Yes`.
 VALIDATE DATABASE <standby_database_name>;
 VALIDATE DATABASE cdbapp1_mcd;
+SHOW CONFIGURATION;
 ```
+
+### 5. Check Overall Data Guard Health
+
+```sql
+SELECT message, timestamp 
+FROM v$dataguard_status 
+ORDER BY timestamp DESC;
+
+-- OR in Data Guard
+SHOW CONFIGURATION;
+VALIDATE DATABASE cdbapp1_sec;
+VALIDATE FAR_SYNC FSInstScd;
+VALIDATE DATABASE cdbapp1_mcd;
+```
+
+### 6. Common Far Sync Warning Codes
+
+| Warning   | Meaning                           | Typical Cause                         | 
+| ---       | ---                               | ---                                 | 
+| ORA-16857 | Member disconnected from redo source | Network hiccup, NetTimeout too low  | 
+| ORA-16855 | Transport lag exceeded threshold | Slow network or FS VM CPU pressure  | 
+| ORA-16853 | Apply lag exceeded threshold      | Standby I/O or MRP lag               | 
+| ORA-16086 | Far Sync cannot write to SRL      | Missing SRLs, wrong VALID_FOR, wrong DB_UNIQUE_NAME | 
+| ORA-16766 | Redo transport error              | Incorrect RedoRoutes or TNS issues   | 
+
 
 ## Key Considerations
 
@@ -372,7 +430,7 @@ VALIDATE DATABASE cdbapp1_mcd;
 
 **Instance Recovery:** Even though there are no datafiles, Far Sync uses the CONTROL_FILES and SRLs. Ensure these are on fast storage.
 
-**Failover Scenario:** If the Far Sync VM goes down, the Broker will attempt to route redo directly to the Standby (likely in ASYNC mode) depending on your FarSyncAdvise setting.
+**Failover Scenario:** If the Far Sync VM goes down, the Broker will attempt to route redo directly to the Standby (likely in ASYNC mode) depending on the Priority 2 rule set in your RedoRoutes configuration.
 
 **RAC Environment:** When adding SRLs to the Far Sync instance, remember that the Far Sync instance must have enough SRLs to handle the redo from the Primary. A good rule of thumb is:
 
