@@ -104,7 +104,6 @@ While the installation progress bar runs, configure the following:
 > Do NOT manually create the `oracle` user here. It is highly recommended to let the `oracle-database-preinstall-19c` package create the `oracle` user and its associated groups automatically later.*
 3. Once the installation is 100% complete, click **Reboot**.
 
-> [!Note]
-> Installation may take 15 to 20 mins.
+*Installation may take 15 to 20 mins.*
 
 Your RAC node is now provisioned and ready for Grid Infrastructure preparation!
