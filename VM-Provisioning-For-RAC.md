@@ -106,4 +106,19 @@ While the installation progress bar runs, configure the following:
 
 *Installation may take 15 to 20 mins.*
 
+
+
+---
+
+## Phase 6: Post Reboot
+
+After reboot run below commands and install Virtual Box Guest Extensions.
+
+```bash
+yum update -y
+
+yum install -y gcc make perl elfutils-libelf-devel kernel-uek-devel-$(uname -r)
+```
+
+
 Your RAC node is now provisioned and ready for Grid Infrastructure preparation!
