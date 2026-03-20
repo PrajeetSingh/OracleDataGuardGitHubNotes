@@ -59,7 +59,7 @@ This runbook describes how to:
 ## On Primary
 
 ```sql
-CREATE UNDO TABLESPACE undotbs2 DATAFILE SIZE 1G AUTOEXTEND ON NEXT 100M MAXSIZE 10G;
+CREATE UNDO TABLESPACE undotbs2 DATAFILE '/u01/app/oracle/oradata/CDBAPP1/undotbs02.dbf' SIZE 1G AUTOEXTEND ON NEXT 100M MAXSIZE 10G;
 ```
 
 ```sql
@@ -89,28 +89,55 @@ SELECT tablespace_name FROM dba_tablespaces WHERE contents='UNDO';
 
 ```sql
 ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL;
+EDIT DATABASE cdbapp1_mcd SET STATE='APPLY-OFF';
+SELECT process, status FROM v$managed_standby;
 ```
 
 ## Backup
 
 ```bash
 mkdir -p /tmp/stby_bkp
-rman target /
+rman 
+connect target /
 ```
 
 ```rman
 RUN {
   ALLOCATE CHANNEL c1 DEVICE TYPE DISK;
   ALLOCATE CHANNEL c2 DEVICE TYPE DISK;
-
-  BACKUP AS COMPRESSED BACKUPSET INCREMENTAL LEVEL 0 DATABASE FORMAT '/tmp/stby_bkp/db_L0_%U.bkp';
-  BACKUP CURRENT CONTROLFILE FOR STANDBY FORMAT '/tmp/stby_bkp/ctl_%U.bkp';
-  BACKUP SPFILE FORMAT '/tmp/stby_bkp/spfile_%U.bkp';
-  BACKUP ARCHIVELOG ALL NOT BACKED UP 1 TIMES FORMAT '/tmp/stby_bkp/al_%U.bkp';
-
+  BACKUP AS COMPRESSED BACKUPSET ARCHIVELOG ALL NOT BACKED UP 1 TIMES FORMAT '/u01/stby_bkp/al_pre_%U.bkp';
+  BACKUP AS COMPRESSED BACKUPSET INCREMENTAL LEVEL 0 DATABASE FORMAT '/u01/stby_bkp/db_L0_%U.bkp';
+  BACKUP CURRENT CONTROLFILE FOR STANDBY FORMAT '/u01/stby_bkp/ctl_%U.bkp';
+  BACKUP SPFILE FORMAT '/u01/stby_bkp/spfile_%U.bkp';
+  BACKUP AS COMPRESSED BACKUPSET ARCHIVELOG ALL FORMAT '/u01/stby_bkp/al_post_%U.bkp';
   RELEASE CHANNEL c1;
   RELEASE CHANNEL c2;
 }
+
+LIST BACKUP SUMMARY;
+LIST BACKUP OF DATABASE;
+LIST BACKUP OF ARCHIVELOG ALL;
+LIST BACKUP OF CONTROLFILE;
+LIST BACKUP OF SPFILE;
+
+VALIDATE BACKUPSET;
+VALIDATE DATABASE;
+LIST BACKUP OF ARCHIVELOG ALL;
+
+CROSSCHECK BACKUP;
+RESTORE DATABASE PREVIEW;
+EXIT;
+```
+
+```SQL
+-- In SQL, note the highest received/applied sequence before and after.
+SELECT thread#, MAX(sequence#) FROM v$archived_log GROUP BY thread# ORDER BY thread#;
+```
+
+```rman
+BACKUP AS COMPRESSED BACKUPSET ARCHIVELOG ALL FORMAT '/u01/stby_bkp/al_final_%U.bkp';
+
+RESTORE DATABASE PREVIEW;
 ```
 
 ## Resume Apply
@@ -118,7 +145,16 @@ RUN {
 ```sql
 CREATE PFILE='/tmp/stby_bkp/initcdbapp1_mrac.ora' FROM SPFILE;
 ALTER DATABASE RECOVER MANAGED STANDBY DATABASE USING CURRENT LOGFILE DISCONNECT;
+EDIT DATABASE cdbapp1_mcd SET STATE='APPLY-ON';
+EXIT;
 ```
+
+## Ship to RAC Node 1
+
+ssh oracle@racnode1 "mkdir -p /u01/stby_bkp"
+
+rsync -avhP /u01/stby_bkp/ oracle@racnode1:/u01/stby_bkp/
+rsync -avhP $ORACLE_HOME/dbs/orapwcdbapp1 oracle@racnode1:/u01/orapwcdbapp1_mrac
 
 ---
 
