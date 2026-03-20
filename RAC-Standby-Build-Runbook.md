@@ -156,7 +156,7 @@ ssh oracle@racnode1 "mkdir -p /u01/stby_bkp"
 
 rsync -avhP /u01/stby_bkp/ oracle@racnode1:/u01/stby_bkp/
 rsync -avhP $ORACLE_HOME/dbs/orapwcdbapp1 oracle@racnode1:/u01/orapwcdbapp1_mrac
-```bash
+```
 
 ---
 
